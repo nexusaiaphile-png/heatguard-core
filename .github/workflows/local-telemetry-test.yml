@@ -1,0 +1,43 @@
+name: Local Telemetry Pipeline Test
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "main.py"
+      - "test_pipeline_local.py"
+      - "requirements.txt"
+      - ".github/workflows/local-telemetry-test.yml"
+  push:
+    branches:
+      - "test/local-telemetry-verification"
+    paths:
+      - "main.py"
+      - "test_pipeline_local.py"
+      - "requirements.txt"
+      - ".github/workflows/local-telemetry-test.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  offline-telemetry-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run offline telemetry test
+        env:
+          HEATGUARD_API_KEY: test-local-api-key
+          DATABASE_URL: sqlite:///./heatguard-ci.db
+          GEMINI_API_KEY: test-key
+        run: python test_pipeline_local.py
