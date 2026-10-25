@@ -120,6 +120,11 @@ class ExternalTelemetry(BaseModel):
     avg_temp: float = Field(ge=-50, le=1000)
     location: str = Field(min_length=1, max_length=255)
 
+class TelemetrySubmission(BaseModel):
+    camera_id: int
+    avg_temp: float = Field(ge=-50, le=1000)
+    location: str = Field(min_length=1, max_length=255)
+
 # ====================== SERVICES ======================
 
 # ----- Hikvision Client -----
@@ -464,16 +469,15 @@ def add_camera(camera: CameraCreate):
         db.close()
 
 @app.post("/api/v1/telemetry/submit")
-async def submit_external_telemetry(camera_id: int, avg_temp: float, location: str):
-    """Accept external temperature samples and dispatch alerts for detected spikes.
+async def submit_external_telemetry(payload: TelemetrySubmission):
+    """Accept JSON telemetry samples and dispatch alerts for detected spikes.
 
     This route is unauthenticated for simulator testing only. Add authentication
     before allowing public or production telemetry submissions.
     """
-    if not -50 <= avg_temp <= 1000:
-        raise HTTPException(status_code=422, detail="avg_temp must be between -50 and 1000 °C")
-    if not location.strip():
-        raise HTTPException(status_code=422, detail="location must not be empty")
+    camera_id = payload.camera_id
+    avg_temp = payload.avg_temp
+    location = payload.location
 
     db = SessionLocal()
     try:
@@ -487,7 +491,7 @@ async def submit_external_telemetry(camera_id: int, avg_temp: float, location: s
             avg_temp=avg_temp,
             min_temp=avg_temp - 3.0,
             location=location,
-            raw_data=json.dumps({"source": "external_simulation_node"})
+            raw_data=json.dumps({"source": "external_json_webhook"})
         )
         db.add(reading)
         db.commit()
