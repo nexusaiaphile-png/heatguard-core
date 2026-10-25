@@ -42,10 +42,15 @@ async def run(base_url: str, timeout_seconds: float) -> int:
         timeout=timeout,
         follow_redirects=True,
     ) as client:
-        trace("1. CHECK SERVICE", payload={"base_url": base_url})
-        response = await client.get("/")
-        trace("Service root response", response.status_code, _safe_json(response))
-        if response.status_code >= 500:
+        trace("1. CHECK SERVICE HEALTH", payload={"base_url": base_url, "health_endpoint": "/health"})
+        response = await client.get("/health")
+        health = _safe_json(response)
+        trace("Health endpoint response", response.status_code, health)
+        if response.status_code != 200 or not isinstance(health, dict) or health.get("status") != "HeatGuard AI is running":
+            trace("SAFETY STOP", payload={
+                "reason": "Health check did not return the expected healthy response; no test camera or telemetry was submitted.",
+                "expected": {"status": "HeatGuard AI is running"},
+            })
             return 1
 
         # Reuse this dedicated test camera when possible; never target an
