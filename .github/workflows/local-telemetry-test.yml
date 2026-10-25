@@ -38,6 +38,6 @@ jobs:
       - name: Run offline telemetry test
         env:
           HEATGUARD_API_KEY: test-local-api-key
-          DATABASE_URL: sqlite:///:memory:
+          DATABASE_URL: sqlite:///./heatguard-ci.db
           GEMINI_API_KEY: test-key
         run: python test_pipeline_local.py
