@@ -454,12 +454,14 @@ app = FastAPI(
 def add_camera(camera: CameraCreate):
     db = SessionLocal()
     try:
+        is_synthetic_test = camera.name == "HeatGuardAI pipeline validation (synthetic)"
         db_cam = Camera(
             name=camera.name,
             ip=camera.ip,
             location=camera.location,
             alert_numbers=camera.alert_numbers,
-            alert_emails=camera.alert_emails
+            alert_emails=camera.alert_emails,
+            is_active=not is_synthetic_test,
         )
         db.add(db_cam)
         db.commit()
@@ -576,6 +578,25 @@ def list_cameras():
     try:
         cams = db.query(Camera).all()
         return [{"id": c.id, "name": c.name, "ip": c.ip, "location": c.location, "active": c.is_active} for c in cams]
+    finally:
+        db.close()
+
+@app.get("/readings")
+def list_readings(camera_id: int, limit: int = 100):
+    """Return recent readings for a camera; bounded for validation and diagnostics."""
+    db = SessionLocal()
+    try:
+        rows = db.query(TemperatureReading).filter(
+            TemperatureReading.camera_id == camera_id
+        ).order_by(TemperatureReading.timestamp.desc()).limit(max(1, min(limit, 500))).all()
+        return [{
+            "id": r.id,
+            "camera_id": r.camera_id,
+            "timestamp": r.timestamp,
+            "avg_temp": r.avg_temp,
+            "location": r.location,
+            "raw_data": r.raw_data,
+        } for r in rows]
     finally:
         db.close()
 
