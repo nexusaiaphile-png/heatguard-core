@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     TWILIO_ACCOUNT_SID: str = "your_sid"
     TWILIO_AUTH_TOKEN: str = "your_token"
     TWILIO_FROM_NUMBER: str = "+1234567890"
+    TWILIO_WHATSAPP_FROM_NUMBER: str = ""  # e.g. whatsapp:+14155238886 for an enabled Twilio sender
 
     # Email (optional)
     SMTP_HOST: str = "smtp.gmail.com"
@@ -262,6 +263,42 @@ async def send_sms(numbers: List[str], message: str):
         except Exception as e:
             logging.error(f"SMS failed to {number}: {e}")
 
+async def send_whatsapp_alert(
+    phone: str,
+    location: str,
+    temperature: float,
+    temp_rise: float,
+    risk_level: Optional[str],
+    recommended_action: Optional[str],
+    camera_id: int,
+):
+    """Send a WhatsApp alert through Twilio when a WhatsApp sender is configured."""
+    sender = settings.TWILIO_WHATSAPP_FROM_NUMBER.strip()
+    if not sender:
+        logging.warning("WhatsApp alert skipped: TWILIO_WHATSAPP_FROM_NUMBER is not configured")
+        return
+    recipient = phone.strip()
+    if not recipient.startswith("whatsapp:"):
+        recipient = f"whatsapp:{recipient}"
+    if not sender.startswith("whatsapp:"):
+        sender = f"whatsapp:{sender}"
+    body = (
+        f"HEATGUARD {risk_level or 'HIGH'} ALERT\\n"
+        f"Location: {location}\\nCamera ID: {camera_id}\\n"
+        f"Temperature: {temperature:.1f}°C (+{temp_rise:.1f}°C)\\n"
+        f"Action: {recommended_action or 'Inspect immediately'}"
+    )
+    try:
+        await asyncio.to_thread(
+            twilio_client.messages.create,
+            body=body,
+            from_=sender,
+            to=recipient,
+        )
+        logging.info("WhatsApp alert sent to %s", phone)
+    except Exception:
+        logging.exception("WhatsApp alert failed for %s", phone)
+
 async def send_email(emails: List[str], subject: str, body: str):
     if not emails:
         return
@@ -427,11 +464,11 @@ def add_camera(camera: CameraCreate):
         db.close()
 
 @app.post("/api/v1/telemetry/submit")
-def submit_external_telemetry(camera_id: int, avg_temp: float, location: str):
-    """Accept external temperature samples for a registered camera.
+async def submit_external_telemetry(camera_id: int, avg_temp: float, location: str):
+    """Accept external temperature samples and dispatch alerts for detected spikes.
 
-    This endpoint is intentionally unauthenticated for initial simulator testing;
-    do not expose it publicly with production data until authentication is added.
+    This route is unauthenticated for simulator testing only. Add authentication
+    before allowing public or production telemetry submissions.
     """
     if not -50 <= avg_temp <= 1000:
         raise HTTPException(status_code=422, detail="avg_temp must be between -50 and 1000 °C")
@@ -456,17 +493,76 @@ def submit_external_telemetry(camera_id: int, avg_temp: float, location: str):
         db.commit()
 
         is_spike, context = detect_spike(db, camera_id, avg_temp, location)
-        if is_spike:
-            logging.warning("External telemetry anomaly: camera_id=%s context=%s", camera_id, context)
-            return {"status": "anomaly_detected", "context": context}
+        if not is_spike:
+            return {
+                "status": "logged",
+                "current_z_score": context.get("z_score") if context else 0,
+                "sample_count": context.get("sample_count", 0) if context else 0,
+            }
+
+        logging.warning("External telemetry anomaly: camera_id=%s context=%s", camera_id, context)
+
+        historical_query = db.query(TemperatureReading.avg_temp).filter(
+            TemperatureReading.camera_id == camera_id
+        ).order_by(TemperatureReading.timestamp.desc()).limit(20).all()
+        history_vector = [row[0] for row in reversed(historical_query)]
+
+        analysis = await gemini_review(context, history_vector)
+        if not analysis.get("is_genuine_spike"):
+            return {"status": "anomaly_reviewed_not_genuine", "context": context, "analysis": analysis}
+
+        alert_record = Alert(
+            camera_id=camera_id,
+            location=location,
+            current_temp=avg_temp,
+            baseline_mean=context["baseline_mean"],
+            z_score=context["z_score"],
+            risk_level=analysis.get("risk_level", "High"),
+            summary=analysis.get("summary"),
+            detailed_analysis=analysis.get("detailed_analysis"),
+            evidence_url=f"https://heatguard.ai/alerts/{camera_id}",
+            sent=False,
+        )
+        db.add(alert_record)
+        db.commit()
+        db.refresh(alert_record)
+
+        alert_msg = (
+            f"{analysis.get('summary') or 'Thermal anomaly detected.'} "
+            f"Action: {analysis.get('recommended_action') or 'Inspect immediately'}. "
+            f"Evidence: {alert_record.evidence_url}"
+        )
+        camera = db.query(Camera).filter(Camera.id == camera_id).first()
+        if camera:
+            phones = [p.strip() for p in (camera.alert_numbers or "").split(",") if p.strip()]
+            dispatches = [send_sms(phones, alert_msg)] if phones else []
+            dispatches.extend(
+                send_whatsapp_alert(
+                    phone, location, avg_temp, context["temp_rise"],
+                    analysis.get("risk_level"), analysis.get("recommended_action"), camera_id
+                )
+                for phone in phones
+            )
+            if dispatches:
+                await asyncio.gather(*dispatches)
+                # Mark as dispatched; individual send functions log provider failures.
+                alert_record.sent = True
+                db.commit()
+
         return {
-            "status": "logged",
-            "current_z_score": context.get("z_score") if context else 0,
-            "sample_count": context.get("sample_count", 0) if context else 0,
+            "status": "anomaly_detected",
+            "context": context,
+            "analysis": analysis,
+            "alert_id": alert_record.id,
+            "notifications_attempted": bool(camera and camera.alert_numbers),
         }
-    except Exception:
+    except HTTPException:
         db.rollback()
         raise
+    except Exception:
+        db.rollback()
+        logging.exception("External telemetry processing failed for camera_id=%s", camera_id)
+        raise HTTPException(status_code=500, detail="Failed to process external telemetry")
     finally:
         db.close()
 
