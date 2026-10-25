@@ -7,13 +7,14 @@ Matches the original video workflow exactly
 import asyncio
 import json
 import logging
+import secrets
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 
 import httpx
 import numpy as np
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Header, Depends
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, Text
@@ -27,6 +28,7 @@ import aiosmtplib
 class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite:///./heatguard.db"
+    HEATGUARD_API_KEY: str = ""
 
     # Hikvision
     HIKVISION_USERNAME: str = "admin"
@@ -100,6 +102,13 @@ class Alert(Base):
     sent = Column(Boolean, default=False)
 
 Base.metadata.create_all(bind=engine)
+
+def require_api_key(x_api_key: Optional[str] = Header(default=None)):
+    expected = settings.HEATGUARD_API_KEY.strip()
+    if not expected:
+        raise HTTPException(status_code=503, detail="API authentication is not configured")
+    if not x_api_key or not secrets.compare_digest(x_api_key, expected):
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 # ====================== MODELS ======================
 class CameraCreate(BaseModel):
@@ -451,7 +460,7 @@ app = FastAPI(
 )
 
 @app.post("/cameras", status_code=201)
-def add_camera(camera: CameraCreate):
+def add_camera(camera: CameraCreate, _auth: None = Depends(require_api_key)):
     db = SessionLocal()
     try:
         is_synthetic_test = camera.name == "HeatGuardAI pipeline validation (synthetic)"
@@ -471,7 +480,7 @@ def add_camera(camera: CameraCreate):
         db.close()
 
 @app.post("/api/v1/telemetry/submit")
-async def submit_external_telemetry(payload: TelemetrySubmission):
+async def submit_external_telemetry(payload: TelemetrySubmission, _auth: None = Depends(require_api_key)):
     """Accept JSON telemetry samples and dispatch alerts for detected spikes.
 
     This route is unauthenticated for simulator testing only. Add authentication
@@ -573,7 +582,7 @@ async def submit_external_telemetry(payload: TelemetrySubmission):
         db.close()
 
 @app.get("/cameras")
-def list_cameras():
+def list_cameras(_auth: None = Depends(require_api_key)):
     db = SessionLocal()
     try:
         cams = db.query(Camera).all()
@@ -582,7 +591,7 @@ def list_cameras():
         db.close()
 
 @app.get("/readings")
-def list_readings(camera_id: int, limit: int = 100):
+def list_readings(camera_id: int, limit: int = 100, _auth: None = Depends(require_api_key)):
     """Return recent readings for a camera; bounded for validation and diagnostics."""
     db = SessionLocal()
     try:
@@ -601,7 +610,7 @@ def list_readings(camera_id: int, limit: int = 100):
         db.close()
 
 @app.get("/alerts")
-def list_alerts(limit: int = 20):
+def list_alerts(limit: int = 20, _auth: None = Depends(require_api_key)):
     db = SessionLocal()
     try:
         alerts = db.query(Alert).order_by(Alert.timestamp.desc()).limit(limit).all()
