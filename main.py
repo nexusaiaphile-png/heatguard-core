@@ -608,6 +608,7 @@ def list_alerts(limit: int = 20):
         return [
             {
                 "id": a.id,
+                "camera_id": a.camera_id,
                 "location": a.location,
                 "temp": a.current_temp,
                 "risk": a.risk_level,
