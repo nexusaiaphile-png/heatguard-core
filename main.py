@@ -118,6 +118,10 @@ class CameraCreate(BaseModel):
     alert_numbers: str  # "+2782...,+2783..."
     alert_emails: Optional[str] = None
 
+class CameraBatchCreate(BaseModel):
+    """Validated batch of camera nodes for installer/portal activation."""
+    cameras: List[CameraCreate] = Field(min_length=1, max_length=500)
+
 class ReadingOut(BaseModel):
     id: int
     camera_id: int
@@ -476,6 +480,57 @@ def add_camera(camera: CameraCreate, _auth: None = Depends(require_api_key)):
         db.commit()
         db.refresh(db_cam)
         return {"id": db_cam.id, "message": "Camera added successfully"}
+    finally:
+        db.close()
+
+@app.post("/api/v1/cameras/bulk-activate")
+def bulk_activate_cameras(payload: CameraBatchCreate, _auth: None = Depends(require_api_key)):
+    """Atomically register up to 500 camera nodes; existing or repeated names are skipped."""
+    db = SessionLocal()
+    registered_nodes = []
+    skipped_count = 0
+    seen_names = set()
+    try:
+        requested_names = list(dict.fromkeys(cam.name for cam in payload.cameras))
+        existing_names = {
+            name for (name,) in db.query(Camera.name).filter(Camera.name.in_(requested_names)).all()
+        }
+
+        for cam_in in payload.cameras:
+            if cam_in.name in existing_names or cam_in.name in seen_names:
+                skipped_count += 1
+                continue
+            seen_names.add(cam_in.name)
+            camera = Camera(
+                name=cam_in.name,
+                ip=cam_in.ip,
+                location=cam_in.location,
+                alert_numbers=cam_in.alert_numbers,
+                alert_emails=cam_in.alert_emails,
+                is_active=True,
+            )
+            db.add(camera)
+            db.flush()
+            registered_nodes.append({
+                "id": camera.id,
+                "name": camera.name,
+                "location": camera.location,
+            })
+
+        db.commit()
+        return {
+            "status": "success",
+            "activated_count": len(registered_nodes),
+            "skipped_count": skipped_count,
+            "nodes": registered_nodes,
+        }
+    except Exception:
+        db.rollback()
+        logging.exception("Bulk activation transaction failure")
+        raise HTTPException(
+            status_code=500,
+            detail="Database transactional engine failure during batch onboarding.",
+        )
     finally:
         db.close()
 
