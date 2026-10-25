@@ -9,7 +9,13 @@ on:
       - "requirements.txt"
       - ".github/workflows/local-telemetry-test.yml"
   push:
-    branches: ["test/local-telemetry-verification"]
+    branches:
+      - "test/local-telemetry-verification"
+    paths:
+      - "main.py"
+      - "test_pipeline_local.py"
+      - "requirements.txt"
+      - ".github/workflows/local-telemetry-test.yml"
 
 permissions:
   contents: read
