@@ -89,6 +89,13 @@ async def run(base_url: str, timeout_seconds: float) -> int:
                 response.raise_for_status()
                 camera_id = int(response.json()["id"])
 
+        camera_response = await client.get("/cameras")
+        camera_response.raise_for_status()
+        selected_camera = next((item for item in camera_response.json() if int(item.get("id", -1)) == camera_id), None)
+        if not selected_camera or selected_camera.get("active") is not False:
+            trace("SAFETY STOP", payload={"reason": "Synthetic validation camera is missing or active; refusing to send synthetic telemetry.", "camera": selected_camera})
+            return 1
+
         trace("Camera selected", payload={
             "camera_id": camera_id,
             "requested_id_1_note": "Camera IDs are assigned by the API; ID 1 cannot safely be forced.",
@@ -130,6 +137,25 @@ async def run(base_url: str, timeout_seconds: float) -> int:
                 "status": result.get("status") if isinstance(result, dict) else None,
                 "note": "Inspect the JSON response and Render logs; HTTP 200 alone does not prove alert delivery.",
             })
+            return 1
+
+        readings_response = await client.get("/readings", params={"camera_id": camera_id, "limit": 100})
+        readings_response.raise_for_status()
+        readings = readings_response.json()
+        test_readings = [r for r in readings if r.get("location") == LOCATION]
+        trace("7. VERIFY STORED READINGS", payload={"camera_id": camera_id, "matching_synthetic_readings_returned": len(test_readings), "expected_at_least": 21})
+        if len(test_readings) < 21:
+            trace("PIPELINE NEEDS REVIEW", payload={"reason": "Expected at least 20 baseline readings plus the anomaly reading."})
+            return 1
+
+        alerts_response = await client.get("/alerts", params={"limit": 100})
+        alerts_response.raise_for_status()
+        alerts = alerts_response.json()
+        matching_alerts = [a for a in alerts if a.get("camera_id") == camera_id and a.get("location") == LOCATION]
+        trace("8. VERIFY STORED ALERT", payload={"camera_id": camera_id, "matching_synthetic_alerts": len(matching_alerts), "latest": matching_alerts[0] if matching_alerts else None})
+        if isinstance(result, dict) and result.get("status") == "anomaly_detected" and not matching_alerts:
+            trace("PIPELINE NEEDS REVIEW", payload={"reason": "API reported anomaly_detected but no matching alert record was visible."})
+            return 1
         return 0
 
 
