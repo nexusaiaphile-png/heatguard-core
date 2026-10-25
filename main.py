@@ -31,8 +31,9 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from twilio.rest import Client as TwilioClient
 
 
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s [%(name)s] %(message)s", force=True)
 logger = logging.getLogger("heatguard")
+logging.getLogger("sqlalchemy.engine").setLevel(os.getenv("SQLALCHEMY_LOG_LEVEL", "WARNING"))
 
 
 class Settings(BaseSettings):
@@ -117,7 +118,9 @@ class RollingBaseline:
         mad = float(statistics.median(deviations))
         robust_sigma = max(1.4826 * mad, 0.5)
         delta = value - baseline
-        anomalous = delta >= self.min_delta_c and delta >= self.sigma * robust_sigma
+        z_score = delta / robust_sigma
+        anomalous = delta >= self.min_delta_c and z_score > self.sigma
+        logger.info("baseline_metric camera=%s value_c=%.2f baseline_c=%.2f delta_c=%.2f robust_sigma=%.3f z_score=%.2f threshold=%.2f anomaly=%s", key, value, baseline, delta, robust_sigma, z_score, self.sigma, anomalous)
         history.append(value)
         return baseline, delta, anomalous
 
@@ -283,7 +286,9 @@ async def review_with_gemini(site_id: str, camera_id: str, temperature: float,
         f"baseline_c={baseline}; deviation_c={deviation}."
     )
     response = await asyncio.to_thread(model.generate_content, prompt)
-    return (getattr(response, "text", None) or "Gemini returned no text.").strip()
+    response_text = (getattr(response, "text", None) or "Gemini returned no text.").strip()
+    logger.info("gemini_response site=%s camera=%s payload=%r", site_id, camera_id, response_text)
+    return response_text
 
 
 async def record_sample(site_id: str, camera_id: str, sample: ThermalSample) -> dict[str, Any]:
@@ -303,6 +308,7 @@ async def record_sample(site_id: str, camera_id: str, sample: ThermalSample) -> 
     with Session(engine) as session:
         session.add(ThermalReading(**row_data))
         session.commit()
+        logger.info("database_commit table=thermal_readings site=%s camera=%s temperature_c=%.2f anomaly=%s observed_at=%s", site_id, camera_id, sample.temperature_c, anomaly, sample.observed_at.isoformat())
 
     if anomaly:
         now = time.monotonic()
