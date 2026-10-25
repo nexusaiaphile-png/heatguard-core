@@ -113,11 +113,11 @@ async def run(base_url: str, timeout_seconds: float) -> int:
         trace("ANOMALY RESPONSE (contains AI analysis if detection triggered)", response.status_code, result)
         response.raise_for_status()
 
-        if isinstance(result, dict) and result.get("status") in {"alert_created", "alert_sent", "anomaly_reviewed_not_genuine"}:
+        if isinstance(result, dict) and result.get("status") in {"anomaly_detected", "anomaly_reviewed_not_genuine"}:
             trace("6. PIPELINE RESPONSE", payload={
                 "interpretation": "Server response indicates the anomaly path was reached.",
                 "status": result.get("status"),
-                "note": "Check Render logs and provider dashboards to verify Gemini execution and actual message delivery.",
+                "note": "Gemini review and alert creation are indicated by anomaly_detected. This test camera has no recipients, so Twilio dispatch is intentionally not attempted.",
             })
         else:
             trace("6. PIPELINE NEEDS REVIEW", payload={
