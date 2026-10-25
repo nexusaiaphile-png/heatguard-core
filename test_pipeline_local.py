@@ -4,6 +4,16 @@ Run: python test_pipeline_local.py
 Uses an in-memory SQLite database and deterministic AI/notification stubs.
 No network calls, real notifications, or production database writes are made.
 """
+# Stub optional SDKs before importing main. This test must never contact providers.
+import sys
+from unittest.mock import MagicMock
+
+sys.modules.setdefault("twilio", MagicMock())
+sys.modules.setdefault("twilio.rest", MagicMock())
+sys.modules.setdefault("google", MagicMock())
+sys.modules.setdefault("google.generativeai", MagicMock())
+sys.modules.setdefault("aiosmtplib", MagicMock())
+
 import asyncio
 import os
 import unittest
