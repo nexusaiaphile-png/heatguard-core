@@ -1,4 +1,4 @@
-"""
+""" 
 HeatGuard AI - Complete Single-File System
 AI-powered thermal heat monitoring & early fire detection
 Matches the original video workflow exactly
@@ -114,6 +114,10 @@ class ReadingOut(BaseModel):
     timestamp: datetime
     avg_temp: float
     location: str
+
+class ExternalTelemetry(BaseModel):
+    avg_temp: float = Field(ge=-50, le=1000)
+    location: str = Field(min_length=1, max_length=255)
 
 # ====================== SERVICES ======================
 
@@ -419,6 +423,50 @@ def add_camera(camera: CameraCreate):
         db.commit()
         db.refresh(db_cam)
         return {"id": db_cam.id, "message": "Camera added successfully"}
+    finally:
+        db.close()
+
+@app.post("/api/v1/telemetry/submit")
+def submit_external_telemetry(camera_id: int, avg_temp: float, location: str):
+    """Accept external temperature samples for a registered camera.
+
+    This endpoint is intentionally unauthenticated for initial simulator testing;
+    do not expose it publicly with production data until authentication is added.
+    """
+    if not -50 <= avg_temp <= 1000:
+        raise HTTPException(status_code=422, detail="avg_temp must be between -50 and 1000 °C")
+    if not location.strip():
+        raise HTTPException(status_code=422, detail="location must not be empty")
+
+    db = SessionLocal()
+    try:
+        camera = db.query(Camera).filter(Camera.id == camera_id).first()
+        if camera is None:
+            raise HTTPException(status_code=404, detail="camera_id is not registered")
+
+        reading = TemperatureReading(
+            camera_id=camera_id,
+            max_temp=avg_temp + 4.0,
+            avg_temp=avg_temp,
+            min_temp=avg_temp - 3.0,
+            location=location,
+            raw_data=json.dumps({"source": "external_simulation_node"})
+        )
+        db.add(reading)
+        db.commit()
+
+        is_spike, context = detect_spike(db, camera_id, avg_temp, location)
+        if is_spike:
+            logging.warning("External telemetry anomaly: camera_id=%s context=%s", camera_id, context)
+            return {"status": "anomaly_detected", "context": context}
+        return {
+            "status": "logged",
+            "current_z_score": context.get("z_score") if context else 0,
+            "sample_count": context.get("sample_count", 0) if context else 0,
+        }
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
