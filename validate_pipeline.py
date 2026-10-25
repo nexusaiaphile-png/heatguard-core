@@ -36,11 +36,16 @@ def trace(label: str, status_code: int | None = None, payload: Any = None) -> No
 
 
 async def run(base_url: str, timeout_seconds: float) -> int:
+    api_key = __import__("os").environ.get("HEATGUARD_API_KEY", "").strip()
+    if not api_key:
+        trace("SAFETY STOP", payload={"reason": "Set HEATGUARD_API_KEY in the environment before running the live validator; no requests sent."})
+        return 2
     timeout = httpx.Timeout(timeout_seconds)
     async with httpx.AsyncClient(
         base_url=base_url.rstrip("/"),
         timeout=timeout,
         follow_redirects=True,
+        headers={"X-API-Key": api_key},
     ) as client:
         trace("1. CHECK SERVICE HEALTH", payload={"base_url": base_url, "health_endpoint": "/health"})
         response = await client.get("/health")
