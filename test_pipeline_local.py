@@ -167,5 +167,82 @@ class LocalTelemetryPipelineTest(unittest.TestCase):
         self.whatsapp_patch.new.assert_not_awaited()
 
 
+class HikvisionThermalParserTest(unittest.IsolatedAsyncioTestCase):
+    """Offline parser tests; mocked HTTP only, no camera or provider access."""
+
+    XML_PAYLOAD = """<?xml version="1.0" encoding="UTF-8"?>
+    <ThermometryBasicInfo xmlns="http://www.hikvision.com/ver20/XMLSchema">
+      <channelName>Test Zone</channelName>
+      <temperatureInfo>
+        <maxTemperature>82.5</maxTemperature>
+        <averageTemperature>46.25</averageTemperature>
+        <minTemperature>21.0</minTemperature>
+      </temperatureInfo>
+    </ThermometryBasicInfo>"""
+
+    JSON_PAYLOAD = {
+        "ThermometryBasicInfo": {
+            "channel": {
+                "temperature": {
+                    "maxTemperature": 82.5,
+                    "averageTemperature": 46.25,
+                    "minTemperature": 21.0,
+                }
+            },
+            "channelName": "Nested Test Zone",
+        }
+    }
+
+    async def _call_parser(self, body, content_type="application/xml"):
+        class FakeResponse:
+            text = body
+            headers = {"content-type": content_type}
+
+            @staticmethod
+            def raise_for_status():
+                return None
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def get(self, url):
+                return FakeResponse()
+
+        with patch.object(service.httpx, "AsyncClient", FakeClient):
+            client = service.HikvisionThermalClient("192.0.2.10")
+            return await client.get_temperature_data()
+
+    async def test_valid_namespaced_xml_payload(self):
+        result = await self._call_parser(self.XML_PAYLOAD)
+        self.assertEqual(result["max_temp"], 82.5)
+        self.assertEqual(result["avg_temp"], 46.25)
+        self.assertEqual(result["min_temp"], 21.0)
+        self.assertEqual(result["location"], "Test Zone")
+
+    async def test_nested_json_payload(self):
+        import json
+        result = await self._call_parser(
+            json.dumps(self.JSON_PAYLOAD), "application/json"
+        )
+        self.assertEqual(result["max_temp"], 82.5)
+        self.assertEqual(result["avg_temp"], 46.25)
+        self.assertEqual(result["min_temp"], 21.0)
+        self.assertEqual(result["location"], "Nested Test Zone")
+
+    async def test_malformed_payload_raises_explicit_value_error(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            "^Hikvision telemetry parsing exception: Malformed payload format$",
+        ):
+            await self._call_parser("this is not JSON or XML", "text/plain")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
