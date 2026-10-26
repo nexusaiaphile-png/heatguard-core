@@ -166,21 +166,15 @@ class HikvisionThermalClient:
                 "raw": data
             }
         except Exception as e:
-            logging.error(f"Hikvision error on {self.base_url}: {e}")
-            # Fallback simulation for testing
-            return self._simulate()
-
-    def _simulate(self):
-        """Temporary simulation when camera is offline"""
-        base = 32.0 + np.random.normal(0, 1.5)
-        return {
-            "timestamp": datetime.utcnow(),
-            "max_temp": base + 4,
-            "avg_temp": base,
-            "min_temp": base - 3,
-            "location": "Simulated Zone",
-            "raw": {"simulated": True}
-        }
+            logging.critical(
+                "Live thermal telemetry unavailable for camera %s; no synthetic reading will be generated: %s",
+                self.base_url,
+                e,
+                exc_info=True,
+            )
+            raise RuntimeError(
+                f"Live thermal telemetry unavailable for camera {self.base_url}"
+            ) from e
 
 # ----- Baseline + Anomaly Detection -----
 def detect_spike(db: Session, camera_id: int, current_temp: float, location: str):
@@ -428,9 +422,15 @@ Evidence & Live View:
 """
     await send_email(emails, f"🔥 HeatGuard Alert – {reading.location}", email_body)
 
-    alert.sent = True
+    # Delivery helpers currently log provider errors but do not return confirmed
+    # provider receipts. Keep sent=False until delivery can be verified.
+    alert.sent = False
     db.commit()
-    logging.info(f"ALERT SENT for camera {camera.name} – {review['risk_level']}")
+    logging.warning(
+        "Alert %s created for camera %s; notification delivery remains unverified",
+        alert.id,
+        camera.name,
+    )
 
 # ====================== BACKGROUND WORKER ======================
 async def monitoring_loop():
@@ -538,8 +538,7 @@ def bulk_activate_cameras(payload: CameraBatchCreate, _auth: None = Depends(requ
 async def submit_external_telemetry(payload: TelemetrySubmission, _auth: None = Depends(require_api_key)):
     """Accept JSON telemetry samples and dispatch alerts for detected spikes.
 
-    This route is unauthenticated for simulator testing only. Add authentication
-    before allowing public or production telemetry submissions.
+    API-key authenticated telemetry ingestion; the API key is required in production.
     """
     camera_id = payload.camera_id
     avg_temp = payload.avg_temp
@@ -614,10 +613,24 @@ async def submit_external_telemetry(payload: TelemetrySubmission, _auth: None = 
                 for phone in phones
             )
             if dispatches:
-                await asyncio.gather(*dispatches)
-                # Mark as dispatched; individual send functions log provider failures.
-                alert_record.sent = True
-                db.commit()
+                try:
+                    # A successful gather only confirms coroutine completion, not provider delivery.
+                    await asyncio.gather(*dispatches)
+                except Exception:
+                    alert_record.sent = False
+                    db.commit()
+                    logging.exception(
+                        "Notification dispatch failed; alert %s remains unverified",
+                        alert_record.id,
+                    )
+                else:
+                    # Send helpers do not return provider delivery receipts; never claim sent.
+                    alert_record.sent = False
+                    db.commit()
+                    logging.warning(
+                        "Notification attempts completed without delivery confirmation; alert %s remains unverified",
+                        alert_record.id,
+                    )
 
         return {
             "status": "anomaly_detected",
@@ -682,6 +695,12 @@ def list_alerts(limit: int = 20, _auth: None = Depends(require_api_key)):
         ]
     finally:
         db.close()
+
+@app.get("/")
+def root_status():
+    """Simple root status endpoint for platform checks; not a substitute for live camera telemetry."""
+    return {"service": "HeatGuard AI", "status": "running", "health": "/health"}
+
 
 @app.get("/health")
 def health():
