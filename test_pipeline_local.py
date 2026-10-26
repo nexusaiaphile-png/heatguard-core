@@ -119,7 +119,9 @@ class LocalTelemetryPipelineTest(unittest.TestCase):
                 headers=headers,
                 json={
                     "camera_id": camera_id,
+                    "max_temp": temperature + 2.0,
                     "avg_temp": temperature,
+                    "min_temp": temperature - 3.0,
                     "location": TEST_LOCATION,
                 },
             )
@@ -131,7 +133,9 @@ class LocalTelemetryPipelineTest(unittest.TestCase):
             headers=headers,
             json={
                 "camera_id": camera_id,
+                "max_temp": 82.5,
                 "avg_temp": 75.0,
+                "min_temp": 61.0,
                 "location": TEST_LOCATION,
             },
         )
@@ -149,6 +153,17 @@ class LocalTelemetryPipelineTest(unittest.TestCase):
         self.assertEqual(len(readings), 22)
         self.assertEqual(sum(r["location"] == TEST_LOCATION for r in readings), 22)
         self.assertTrue(any(r["avg_temp"] == 75.0 for r in readings))
+        with self.TestSessionLocal() as db:
+            peak = db.query(service.TemperatureReading).filter(
+                service.TemperatureReading.camera_id == camera_id,
+                service.TemperatureReading.avg_temp == 75.0,
+            ).one()
+            self.assertEqual(peak.max_temp, 82.5)
+            self.assertEqual(peak.min_temp, 61.0)
+            self.assertEqual(
+                peak.raw_data,
+                '{"source": "external_edge_agent_node"}',
+            )
 
         alerts_response = self.client.get(
             "/alerts", headers=headers, params={"limit": 100}
