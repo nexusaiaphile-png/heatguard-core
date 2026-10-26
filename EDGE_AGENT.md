@@ -1,6 +1,6 @@
 # HeatGuard Edge Agent (pilot MVP)
 
-This agent runs on an authorised computer on the same local network as a compatible Hikvision thermal camera. It polls the camera's ISAPI thermometry endpoint and forwards average-temperature samples to HeatGuard Cloud over HTTPS. It is a foreground process for the pilot; install it as an operating-system service only after site-specific validation.
+This agent runs on an authorised computer on the same local network as a compatible Hikvision thermal camera. It polls the camera's ISAPI thermometry endpoint and forwards max/average/min-temperature samples to HeatGuard Cloud over HTTPS. It is a foreground process for the pilot; install it as an operating-system service only after site-specific validation.
 
 ## Requirements
 
@@ -36,7 +36,7 @@ Use real values only on a site where access is authorised. The process logs succ
 
 ## Current limitations (important)
 
-- The current cloud telemetry API accepts only `camera_id`, `avg_temp`, and `location`. The cloud code derives max/min values rather than accepting the camera's actual max/min. The edge agent currently submits average temperature only; preserving actual max/min requires a backward-compatible API/schema change.
+- The telemetry API requires `camera_id`, `max_temp`, `avg_temp`, `min_temp`, and `location`. The edge agent submits the camera's parsed max/average/min values directly; older clients that omit max/min must be updated.
 - Local spool retry is at-least-once. A network timeout can happen after the cloud stores a reading, so replay may create a duplicate. Production-grade deduplication requires an idempotency/event ID in the API.
 - No agent heartbeat/health endpoint exists in the current API; the portal cannot yet show authoritative agent-connected status.
 - The script polls and parses but has not been validated against a physical camera in this repository workflow. Confirm model/firmware response shape, credentials, units, TLS/API behaviour, and real alert delivery at a controlled pilot before relying on it.
