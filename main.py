@@ -148,57 +148,98 @@ class HikvisionThermalClient:
         self.channel = channel
 
     async def get_temperature_data(self) -> Dict[str, Any]:
-        """Pull radiometric data from Hikvision thermal camera"""
+        """Pull radiometric data from Hikvision thermal camera (JSON or XML)."""
+        import re
+        import xml.etree.ElementTree as ET
+
         url = f"{self.base_url}/ISAPI/Thermal/channels/{self.channel}/thermometry/basicInfo"
+        malformed = "Hikvision telemetry parsing exception: Malformed payload format"
+
+        def normalize_key(key: Any) -> str:
+            return re.sub(r"[^a-z0-9]", "", str(key).lower())
+
+        def find_nested_value(source: Any, names: set[str]) -> Optional[Any]:
+            if isinstance(source, dict):
+                for key, value in source.items():
+                    if normalize_key(key) in names and value not in (None, ""):
+                        return value
+                for value in source.values():
+                    found = find_nested_value(value, names)
+                    if found is not None:
+                        return found
+            elif isinstance(source, list):
+                for value in source:
+                    found = find_nested_value(value, names)
+                    if found is not None:
+                        return found
+            return None
+
         try:
             async with httpx.AsyncClient(auth=self.auth, timeout=8.0) as client:
                 resp = await client.get(url)
                 resp.raise_for_status()
+                body = resp.text.strip()
                 content_type = resp.headers.get("content-type", "").lower()
-                body = resp.text
-                if "json" in content_type or body.lstrip().startswith(("{", "[")):
-                    data = resp.json()
-                elif body.lstrip().startswith("<"):
-                    import xml.etree.ElementTree as ET
 
+            if not body:
+                raise ValueError(malformed)
+
+            # Prefer XML when the body is XML, even if content-type is inaccurate.
+            if body.startswith("<") or "xml" in content_type:
+                try:
                     root = ET.fromstring(body)
-                    data = {}
+                    data: Dict[str, Any] = {}
                     for node in root.iter():
                         tag = node.tag.rsplit("}", 1)[-1]
                         if node.text and node.text.strip():
                             data[tag] = node.text.strip()
-                else:
-                    raise ValueError(
-                        f"Unsupported Hikvision response format: {content_type or 'unknown content type'}"
-                    )
+                except (ET.ParseError, ValueError, TypeError):
+                    raise ValueError(malformed) from None
+            else:
+                # Some camera models/configurations return application/json.
+                try:
+                    data = json.loads(body)
+                except (json.JSONDecodeError, TypeError):
+                    raise ValueError(malformed) from None
+                if not isinstance(data, (dict, list)):
+                    raise ValueError(malformed)
 
-            def find_value(source: Dict[str, Any], names: set[str]) -> Optional[Any]:
-                for key, value in source.items():
-                    normalized = str(key).replace("_", "").lower()
-                    if normalized in names and value not in (None, ""):
-                        return value
-                return None
+            max_value = find_nested_value(data, {"maxtemperature"})
+            avg_value = find_nested_value(data, {"averagetemperature", "avgtemperature"})
+            min_value = find_nested_value(data, {"mintemperature"})
+            location_value = find_nested_value(data, {"channelname"})
 
-            thermo = data.get("ThermometryBasicInfo", data.get("thermometry", data))
-            if not isinstance(thermo, dict):
-                thermo = data
-
-            max_value = find_value(thermo, {"maxtemperature"})
-            avg_value = find_value(thermo, {"averagetemperature", "avgtemperature"})
-            min_value = find_value(thermo, {"mintemperature"})
             if max_value is None or avg_value is None or min_value is None:
-                raise ValueError(
-                    "Hikvision response did not contain all expected max/average/min temperature fields"
-                )
+                raise ValueError(malformed)
+
+            try:
+                max_temp = float(max_value)
+                avg_temp = float(avg_value)
+                min_temp = float(min_value)
+            except (TypeError, ValueError):
+                raise ValueError(malformed) from None
 
             return {
                 "timestamp": datetime.utcnow(),
-                "max_temp": float(max_value),
-                "avg_temp": float(avg_value),
-                "min_temp": float(min_value),
-                "location": find_value(data, {"channelname"}) or "Unknown Zone",
-                "raw": data
+                "max_temp": max_temp,
+                "avg_temp": avg_temp,
+                "min_temp": min_temp,
+                "location": location_value or "Unknown Zone",
+                "raw": data,
             }
+        except ValueError as e:
+            if str(e) == malformed:
+                logging.error("Hikvision telemetry parsing failed for %s", self.base_url)
+                raise
+            logging.critical(
+                "Live thermal telemetry unavailable for camera %s: %s",
+                self.base_url,
+                e,
+                exc_info=True,
+            )
+            raise RuntimeError(
+                f"Live thermal telemetry unavailable for camera {self.base_url}"
+            ) from e
         except Exception as e:
             logging.critical(
                 "Live thermal telemetry unavailable for camera %s; no synthetic reading will be generated: %s",
