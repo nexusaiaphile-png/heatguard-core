@@ -136,6 +136,8 @@ class ExternalTelemetry(BaseModel):
 class TelemetrySubmission(BaseModel):
     camera_id: int
     avg_temp: float = Field(ge=-50, le=1000)
+    max_temp: float = Field(ge=-50, le=1000)
+    min_temp: float = Field(ge=-50, le=1000)
     location: str = Field(min_length=1, max_length=255)
 
 # ====================== SERVICES ======================
@@ -627,11 +629,11 @@ async def submit_external_telemetry(payload: TelemetrySubmission, _auth: None = 
 
         reading = TemperatureReading(
             camera_id=camera_id,
-            max_temp=avg_temp + 4.0,
-            avg_temp=avg_temp,
-            min_temp=avg_temp - 3.0,
+            max_temp=payload.max_temp,
+            avg_temp=payload.avg_temp,
+            min_temp=payload.min_temp,
             location=location,
-            raw_data=json.dumps({"source": "external_json_webhook"})
+            raw_data='{"source": "external_edge_agent_node"}'
         )
         db.add(reading)
         db.commit()
