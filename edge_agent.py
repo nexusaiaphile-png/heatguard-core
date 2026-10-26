@@ -111,11 +111,11 @@ class EdgeAgent:
             file.write(json.dumps(event) + "\n")
 
     def _submit(self, event: dict[str, Any]) -> None:
-        # Existing API accepts average temperature and location only. The cloud
-        # endpoint currently derives max/min, so do not imply those values are stored.
         payload = {
             "camera_id": self.camera_id,
+            "max_temp": event["max_temp"],
             "avg_temp": event["avg_temp"],
+            "min_temp": event["min_temp"],
             "location": event["location"],
         }
         with httpx.Client(timeout=10.0) as client:
