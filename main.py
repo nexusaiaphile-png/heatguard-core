@@ -154,15 +154,49 @@ class HikvisionThermalClient:
             async with httpx.AsyncClient(auth=self.auth, timeout=8.0) as client:
                 resp = await client.get(url)
                 resp.raise_for_status()
-                data = resp.json()
+                content_type = resp.headers.get("content-type", "").lower()
+                body = resp.text
+                if "json" in content_type or body.lstrip().startswith(("{", "[")):
+                    data = resp.json()
+                elif body.lstrip().startswith("<"):
+                    import xml.etree.ElementTree as ET
 
-            thermo = data.get("ThermometryBasicInfo", data.get("thermometry", {}))
+                    root = ET.fromstring(body)
+                    data = {}
+                    for node in root.iter():
+                        tag = node.tag.rsplit("}", 1)[-1]
+                        if node.text and node.text.strip():
+                            data[tag] = node.text.strip()
+                else:
+                    raise ValueError(
+                        f"Unsupported Hikvision response format: {content_type or 'unknown content type'}"
+                    )
+
+            def find_value(source: Dict[str, Any], names: set[str]) -> Optional[Any]:
+                for key, value in source.items():
+                    normalized = str(key).replace("_", "").lower()
+                    if normalized in names and value not in (None, ""):
+                        return value
+                return None
+
+            thermo = data.get("ThermometryBasicInfo", data.get("thermometry", data))
+            if not isinstance(thermo, dict):
+                thermo = data
+
+            max_value = find_value(thermo, {"maxtemperature"})
+            avg_value = find_value(thermo, {"averagetemperature", "avgtemperature"})
+            min_value = find_value(thermo, {"mintemperature"})
+            if max_value is None or avg_value is None or min_value is None:
+                raise ValueError(
+                    "Hikvision response did not contain all expected max/average/min temperature fields"
+                )
+
             return {
                 "timestamp": datetime.utcnow(),
-                "max_temp": float(thermo.get("maxTemperature", thermo.get("MaxTemperature", 0))),
-                "avg_temp": float(thermo.get("averageTemperature", thermo.get("AverageTemperature", 0))),
-                "min_temp": float(thermo.get("minTemperature", thermo.get("MinTemperature", 0))),
-                "location": data.get("channelName", "Unknown Zone"),
+                "max_temp": float(max_value),
+                "avg_temp": float(avg_value),
+                "min_temp": float(min_value),
+                "location": find_value(data, {"channelname"}) or "Unknown Zone",
                 "raw": data
             }
         except Exception as e:
