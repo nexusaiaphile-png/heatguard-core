@@ -127,20 +127,22 @@ class EdgeAgent:
             response.raise_for_status()
 
     def run_once(self) -> bool:
+        event: dict[str, Any] | None = None
         try:
             event = self.read_camera()
             self._submit(event)
             LOG.info("Telemetry submitted: camera_id=%s avg_temp=%s", self.camera_id, event["avg_temp"])
             return True
         except (httpx.HTTPError, ValueError, ET.ParseError, OSError, KeyError) as exc:
-            # Spool raw parsed readings only. Retrying is at-least-once: a timeout
-            # may occur after the cloud has committed a reading; duplicate protection
-            # requires a future idempotency key on the API.
-            try:
-                self._spool({"queued_at": datetime.now(timezone.utc).isoformat(), **self.read_camera()})
-            except Exception:
-                LOG.exception("Could not save pending telemetry locally")
-            LOG.warning("Telemetry cycle failed; pending sample may be retried later: %s", exc)
+            # Spool only a successfully parsed sample. Retrying is at-least-once:
+            # a timeout may occur after cloud commit, so duplicates are possible
+            # until the API supports idempotency keys.
+            if event is not None:
+                try:
+                    self._spool({"queued_at": datetime.now(timezone.utc).isoformat(), **event})
+                except OSError:
+                    LOG.exception("Could not save pending telemetry locally")
+            LOG.warning("Telemetry cycle failed: %s", exc)
             return False
 
     def flush_spool(self) -> None:
