@@ -14,7 +14,8 @@ from contextlib import asynccontextmanager
 
 import httpx
 import numpy as np
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Header, Depends
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Header, Depends, Security
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, Text
@@ -29,6 +30,7 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite:///./heatguard.db"
     HEATGUARD_API_KEY: str = ""
+    API_SECURITY_TOKEN: str = ""
 
     # Hikvision
     HIKVISION_USERNAME: str = "admin"
@@ -59,6 +61,20 @@ class Settings(BaseSettings):
         env_file = ".env"
 
 settings = Settings()
+
+# Dedicated credential for edge-agent telemetry and installer camera activation.
+# auto_error=False lets us consistently return HTTP 403 for a missing header.
+heatguard_token_header = APIKeyHeader(name="X-HeatGuard-Token", auto_error=False)
+
+def require_heatguard_token(token: Optional[str] = Security(heatguard_token_header)) -> None:
+    if not token:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    expected = settings.API_SECURITY_TOKEN.strip()
+    if not expected:
+        logging.error("API_SECURITY_TOKEN is not configured; protected endpoint denied")
+        raise HTTPException(status_code=503, detail="API security is not configured")
+    if not secrets.compare_digest(token, expected):
+        raise HTTPException(status_code=403, detail="Forbidden")
 
 # ====================== DATABASE ======================
 engine = create_engine(settings.DATABASE_URL, pool_size=20, max_overflow=10, pool_pre_ping=True)
@@ -561,7 +577,7 @@ def add_camera(camera: CameraCreate, _auth: None = Depends(require_api_key)):
         db.close()
 
 @app.post("/api/v1/cameras/bulk-activate")
-def bulk_activate_cameras(payload: CameraBatchCreate, _auth: None = Depends(require_api_key)):
+def bulk_activate_cameras(payload: CameraBatchCreate, _auth: None = Depends(require_heatguard_token)):
     """Atomically register up to 500 camera nodes; existing or repeated names are skipped."""
     db = SessionLocal()
     registered_nodes = []
@@ -612,7 +628,7 @@ def bulk_activate_cameras(payload: CameraBatchCreate, _auth: None = Depends(requ
         db.close()
 
 @app.post("/api/v1/telemetry/submit")
-async def submit_external_telemetry(payload: TelemetrySubmission, _auth: None = Depends(require_api_key)):
+async def submit_external_telemetry(payload: TelemetrySubmission, _auth: None = Depends(require_heatguard_token)):
     """Accept JSON telemetry samples and dispatch alerts for detected spikes.
 
     API-key authenticated telemetry ingestion; the API key is required in production.
