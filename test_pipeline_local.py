@@ -151,7 +151,7 @@ class LocalTelemetryPipelineTest(unittest.TestCase):
             db.refresh(camera)
             camera_id = camera.id
 
-        headers = {"X-API-Key": API_KEY}
+        headers = {"X-HeatGuard-Token": "local-installer-token-only"}
         for i in range(21):
             temperature = 31.0 + (0.1 if i % 2 else -0.1)
             response = self.client.post(
