@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en-ZA">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#07110f">
+<meta name="description" content="Authorised HeatGuard AI camera activation portal.">
+<title>Camera Activation — HeatGuard AI</title>
+<style>
+:root{color-scheme:dark;--bg:#07110f;--panel:#0d1b18;--panel2:#10241f;--ink:#f3faf7;--muted:#a6bbb3;--line:#244239;--green:#7cf2b3;--lime:#c7ff78}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 80% 0%,#153b2d 0,transparent 38%),var(--bg);color:var(--ink);font:16px/1.55 Inter,system-ui,-apple-system,"Segoe UI",sans-serif}.wrap{width:min(980px,calc(100% - 32px));margin:auto}.nav{height:76px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #ffffff18}.brand{font-weight:850;font-size:1.2rem}.brand span{color:var(--green)}a{color:var(--green)}.button{border:0;border-radius:10px;background:var(--green);color:#061810;font-weight:800;padding:12px 18px;cursor:pointer}.button:disabled{opacity:.55;cursor:wait}.panel{margin:42px auto;background:linear-gradient(155deg,#10221c,#0a1512);border:1px solid var(--line);border-radius:20px;padding:clamp(20px,4vw,36px);box-shadow:0 25px 70px #0004}.eyebrow{color:var(--green);font-weight:800;text-transform:uppercase;letter-spacing:.12em;font-size:.76rem}h1{font-size:clamp(2rem,5vw,3.2rem);line-height:1.08;letter-spacing:-.05em;margin:10px 0}p{color:var(--muted)}.notice{border-left:3px solid var(--lime);padding:10px 14px;background:#c7ff780c;color:#d5e8df;border-radius:0 9px 9px 0;font-size:.9rem}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.field{display:grid;gap:6px;margin:14px 0}.field label{font-size:.88rem;color:#d9e9e1;font-weight:650}input{width:100%;padding:12px 13px;border:1px solid #315347;border-radius:9px;background:#071510;color:var(--ink);font:inherit}input:focus{outline:2px solid #7cf2b366;border-color:var(--green)}small,.muted{color:var(--muted)}.camera{border:1px solid var(--line);border-radius:14px;padding:16px;margin:18px 0;background:#07151088}.camera-head{display:flex;justify-content:space-between;align-items:center;gap:12px}.remove{border:1px solid #704b4b;background:transparent;color:#ffb8b8;border-radius:8px;padding:7px 10px;cursor:pointer}.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:24px}.secondary{border:1px solid var(--line);background:transparent;color:var(--ink);border-radius:10px;padding:11px 15px;cursor:pointer}.status{display:none;margin-top:20px;padding:14px;border-radius:10px;white-space:pre-wrap;overflow-wrap:anywhere}.status.ok{display:block;border:1px solid #347a56;background:#143424}.status.error{display:block;border:1px solid #8a4848;background:#351919}.footer{text-align:center;color:#81998e;padding:20px 0 35px;font-size:.82rem}
+@media(max-width:650px){.grid{grid-template-columns:1fr}.nav{height:66px}.panel{margin:24px auto}.actions>*{width:100%}}
+</style>
+</head>
+<body>
+<header class="wrap nav"><a class="brand" href="/">HEATGUARD <span>AI</span></a><a href="/">Back to website</a></header>
+<main class="wrap">
+<section class="panel">
+<div class="eyebrow">Authorised installer workspace</div>
+<h1>Activate thermal cameras.</h1>
+<p>Register compatible camera nodes to a HeatGuard AI site. Camera network reachability and live thermal readings must be validated separately after registration.</p>
+<div class="notice"><strong>Restricted access.</strong> This activation tool requires the HeatGuard installer token supplied by an authorised HeatGuard administrator. Never share that token with customers or put it in public website code. It is held only in this page's memory and is not saved.</div>
+<form id="activation-form">
+<div class="grid">
+<div class="field"><label for="api-url">API address</label><input id="api-url" type="url" value="https://heatguard-core-engine.onrender.com" required autocomplete="url"><small>Use the API hostname assigned by Render.</small></div>
+<div class="field"><label for="access-token">Installer activation token</label><input id="access-token" type="password" required autocomplete="off" placeholder="Enter authorised token"></div>
+</div>
+<div id="camera-list">
+<section class="camera" data-camera>
+<div class="camera-head"><strong>Camera 1</strong></div>
+<div class="grid">
+<div class="field"><label>Camera name</label><input name="name" required maxlength="120" placeholder="e.g. Warehouse Thermal 01"></div>
+<div class="field"><label>Camera IP address</label><input name="ip" required maxlength="255" placeholder="e.g. 192.168.1.64"></div>
+<div class="field"><label>Site / location</label><input name="location" required maxlength="255" placeholder="e.g. Bergville Warehouse"></div>
+<div class="field"><label>Alert phone number(s)</label><input name="alert_numbers" required placeholder="+27821234567"></div>
+<div class="field"><label>Alert email address(es) (optional)</label><input name="alert_emails" type="text" placeholder="ops@example.co.za"></div>
+</div>
+</section>
+</div>
+<div class="actions"><button class="secondary" type="button" id="add-camera">+ Add another camera</button><button class="button" id="submit-button" type="submit">Activate camera(s)</button></div>
+</form>
+<div id="result" class="status" role="status" aria-live="polite"></div>
+<p class="muted"><small>Activation registers camera details in the backend. It does not prove that the cloud service can reach a private LAN IP, that the model supports radiometry, or that alert delivery is working. Perform an authorised on-site connectivity and telemetry test before enabling operational monitoring.</small></p>
+</section>
+</main>
+<footer class="wrap footer">© 2026 HeatGuard AI · Secure camera onboarding</footer>
+<script>
+const list=document.getElementById('camera-list');
+const result=document.getElementById('result');
+const addButton=document.getElementById('add-camera');
+const submitButton=document.getElementById('submit-button');
+function renumber(){[...list.querySelectorAll('[data-camera]')].forEach((card,i)=>{card.querySelector('.camera-head strong').textContent='Camera '+(i+1);const remove=card.querySelector('.remove');if(remove)remove.hidden=list.children.length===1;});}
+function addCamera(){const card=document.createElement('section');card.className='camera';card.dataset.camera='';card.innerHTML='<div class="camera-head"><strong></strong><button class="remove" type="button">Remove</button></div><div class="grid"><div class="field"><label>Camera name</label><input name="name" required maxlength="120" placeholder="e.g. Warehouse Thermal 02"></div><div class="field"><label>Camera IP address</label><input name="ip" required maxlength="255" placeholder="e.g. 192.168.1.65"></div><div class="field"><label>Site / location</label><input name="location" required maxlength="255" placeholder="e.g. Bergville Warehouse"></div><div class="field"><label>Alert phone number(s)</label><input name="alert_numbers" required placeholder="+27821234567"></div><div class="field"><label>Alert email address(es) (optional)</label><input name="alert_emails" type="text" placeholder="ops@example.co.za"></div></div>';card.querySelector('.remove').addEventListener('click',()=>{card.remove();renumber();});list.append(card);renumber();}
+addButton.addEventListener('click',addCamera);
+document.getElementById('activation-form').addEventListener('submit',async(event)=>{event.preventDefault();result.className='status';result.textContent='';const api=document.getElementById('api-url').value.trim().replace(/\/$/,'');const token=document.getElementById('access-token').value;const cameras=[...list.querySelectorAll('[data-camera]')].map(card=>{const value=name=>card.querySelector('[name="'+name+'"]').value.trim();return{name:value('name'),ip:value('ip'),location:value('location'),alert_numbers:value('alert_numbers'),alert_emails:value('alert_emails')||null};});if(cameras.length>500){result.className='status error';result.textContent='A maximum of 500 cameras can be activated in one batch.';return;}submitButton.disabled=true;submitButton.textContent='Activating…';try{const response=await fetch(api+'/api/v1/cameras/bulk-activate',{method:'POST',headers:{'Content-Type':'application/json','X-HeatGuard-Token':token},body:JSON.stringify({cameras})});const body=await response.json().catch(()=>({detail:'The server returned an unreadable response.'}));if(!response.ok){const detail=typeof body.detail==='string'?body.detail:JSON.stringify(body.detail||body);throw new Error('Activation failed (HTTP '+response.status+'): '+detail);}result.className='status ok';result.textContent='Activation request completed.\nRegistered: '+body.activated_count+'\nSkipped (already registered or duplicate): '+body.skipped_count+'\n\n'+(body.nodes||[]).map(node=>'#'+node.id+' · '+node.name+' · '+node.location).join('\n');document.getElementById('access-token').value='';}catch(error){result.className='status error';result.textContent=error.message+'\n\nCheck the API address, installer token, and network connection. If this is a browser CORS error, confirm the portal origin is allowed by the API.';}finally{submitButton.disabled=false;submitButton.textContent='Activate camera(s)';}});
+renumber();
+</script>
+</body>
+</html>

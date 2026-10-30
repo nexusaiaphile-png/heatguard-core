@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 import httpx
 import numpy as np
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Header, Depends, Security
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
@@ -554,6 +555,21 @@ app = FastAPI(
     description="AI-powered thermal early fire detection system",
     version="1.0.0",
     lifespan=lifespan
+)
+
+
+# Permit the hosted installer portal to call the token-protected API.
+# CORS controls browser origins; X-HeatGuard-Token remains the authentication layer.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://heatguard-ai-website.onrender.com",
+        "https://heatguardai.co.za",
+        "https://www.heatguardai.co.za",
+    ],
+    allow_credentials=False,
+    allow_methods=["POST", "OPTIONS"],
+    allow_headers=["Content-Type", "X-HeatGuard-Token"],
 )
 
 @app.post("/cameras", status_code=201)

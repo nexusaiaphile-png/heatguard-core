@@ -46,8 +46,10 @@ class LocalTelemetryPipelineTest(unittest.TestCase):
         service.Base.metadata.create_all(bind=cls.engine)
         cls.original_session_local = service.SessionLocal
         cls.original_api_key = service.settings.HEATGUARD_API_KEY
+        cls.original_activation_token = service.settings.API_SECURITY_TOKEN
         service.SessionLocal = cls.TestSessionLocal
         service.settings.HEATGUARD_API_KEY = API_KEY
+        service.settings.API_SECURITY_TOKEN = "local-installer-token-only"
 
         # Deterministic review guarantees the anomaly path can be tested offline.
         cls.gemini_patch = patch.object(
@@ -80,6 +82,7 @@ class LocalTelemetryPipelineTest(unittest.TestCase):
         cls.email_patch.stop()
         service.SessionLocal = cls.original_session_local
         service.settings.HEATGUARD_API_KEY = cls.original_api_key
+        service.settings.API_SECURITY_TOKEN = cls.original_activation_token
         service.Base.metadata.drop_all(bind=cls.engine)
         cls.engine.dispose()
 
@@ -96,6 +99,43 @@ class LocalTelemetryPipelineTest(unittest.TestCase):
         response = self.client.get("/cameras", headers={"X-API-Key": API_KEY})
         self.assertEqual(response.status_code, 200)
 
+    def test_camera_bulk_activation_requires_token_and_registers_camera(self):
+        payload = {"cameras": [{
+            "name": "Local portal activation test",
+            "ip": "192.0.2.44",
+            "location": "Synthetic Test Site",
+            "alert_numbers": "+27820000000",
+            "alert_emails": None,
+        }]}
+        denied = self.client.post("/api/v1/cameras/bulk-activate", json=payload)
+        self.assertEqual(denied.status_code, 403)
+
+        response = self.client.post(
+            "/api/v1/cameras/bulk-activate",
+            headers={"X-HeatGuard-Token": "local-installer-token-only"},
+            json=payload,
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["activated_count"], 1)
+        self.assertEqual(body["skipped_count"], 0)
+        self.assertEqual(body["nodes"][0]["name"], "Local portal activation test")
+
+    def test_activation_portal_cors_preflight(self):
+        response = self.client.options(
+            "/api/v1/cameras/bulk-activate",
+            headers={
+                "Origin": "https://heatguard-ai-website.onrender.com",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type,x-heatguard-token",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers.get("access-control-allow-origin"),
+            "https://heatguard-ai-website.onrender.com",
+        )
+
     def test_21_readings_persist_and_anomaly_creates_alert(self):
         with self.TestSessionLocal() as db:
             camera = service.Camera(
@@ -111,7 +151,7 @@ class LocalTelemetryPipelineTest(unittest.TestCase):
             db.refresh(camera)
             camera_id = camera.id
 
-        headers = {"X-API-Key": API_KEY}
+        headers = {"X-HeatGuard-Token": "local-installer-token-only"}
         for i in range(21):
             temperature = 31.0 + (0.1 if i % 2 else -0.1)
             response = self.client.post(
@@ -145,7 +185,7 @@ class LocalTelemetryPipelineTest(unittest.TestCase):
         self.assertIn("alert_id", body)
 
         readings_response = self.client.get(
-            "/readings", headers=headers,
+            "/readings", headers={"X-API-Key": API_KEY},
             params={"camera_id": camera_id, "limit": 100},
         )
         self.assertEqual(readings_response.status_code, 200)
@@ -166,7 +206,7 @@ class LocalTelemetryPipelineTest(unittest.TestCase):
             )
 
         alerts_response = self.client.get(
-            "/alerts", headers=headers, params={"limit": 100}
+            "/alerts", headers={"X-API-Key": API_KEY}, params={"limit": 100}
         )
         self.assertEqual(alerts_response.status_code, 200)
         matches = [
