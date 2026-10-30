@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 import httpx
 import numpy as np
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Header, Depends, Security
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
