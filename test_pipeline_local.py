@@ -185,7 +185,7 @@ class LocalTelemetryPipelineTest(unittest.TestCase):
         self.assertIn("alert_id", body)
 
         readings_response = self.client.get(
-            "/readings", headers=headers,
+            "/readings", headers={"X-API-Key": API_KEY},
             params={"camera_id": camera_id, "limit": 100},
         )
         self.assertEqual(readings_response.status_code, 200)
@@ -206,7 +206,7 @@ class LocalTelemetryPipelineTest(unittest.TestCase):
             )
 
         alerts_response = self.client.get(
-            "/alerts", headers=headers, params={"limit": 100}
+            "/alerts", headers={"X-API-Key": API_KEY}, params={"limit": 100}
         )
         self.assertEqual(alerts_response.status_code, 200)
         matches = [
